@@ -1,0 +1,17 @@
+version: "3.9"
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      TZ: Asia/Tokyo
+    command:
+      - --socket=/var/run/mysqld/mysqld.sock
+      - --skip-networking=on
+    volumes:
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
+      - type: bind
+        source: ./mysql-sock
+        target: /var/run/mysqld
+        bind:
+          create_host_path: true
