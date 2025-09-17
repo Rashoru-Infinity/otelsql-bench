@@ -93,51 +93,21 @@ func calcAvg(samples []time.Duration) (time.Duration, error) {
 	return time.Duration(avg), nil
 }
 
-func BenchmarkOtelSQL(tb *testing.B) {
-	rdbClients := []openDB{
-		openDBXSAM,
-		openDBUptrace,
-		openDBNhat,
-	}
+func benchOtelSQL(tb *testing.B, f openDB) {
 	windowSize := 200
 	tolerance := 0.05
 	recordSize := 3
-	for _, f := range rdbClients {
-		db, name, err := f()
-		require.NoError(tb, err)
-		defer db.Close()
-		fmt.Printf("===%s===\n", name)
-		log.Println("warmup")
-		warmState := newWarmState(recordSize, tolerance)
-		for !warmState.isStable() {
-			samples := make([]time.Duration, windowSize)
-			for i := 0; i < 200; i++ {
-				tb.StartTimer()
-				tx, err := db.BeginTxx(tb.Context(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
-				require.NoError(tb, err)
-				rows, err := tx.QueryContext(tb.Context(), "SELECT id, content FROM messages LIMIT ?", 65536)
-				require.NoError(tb, err)
-				defer rows.Close()
+	db, name, err := f()
+	require.NoError(tb, err)
+	defer db.Close()
 
-				for rows.Next() {
-					var id int
-					var content string
-					err = rows.Scan(&id, &content)
-					require.NoError(tb, err)
-				}
-				require.NoError(tb, tx.Commit())
-				elapsed := tb.Elapsed()
-				samples = append(samples, elapsed)
-				tb.ResetTimer()
-			}
-			p50, err := calcP50(samples)
-			require.NoError(tb, err)
-			warmState.updateP50s(p50)
-		}
-
-		log.Println("start bench")
+	fmt.Printf("===%s===\n", name)
+	log.Println("warmup")
+	warmState := newWarmState(recordSize, tolerance)
+	for !warmState.isStable() {
 		samples := make([]time.Duration, windowSize)
-		for i := 0; i < windowSize; i++ {
+
+		runBench := func() {
 			tb.StartTimer()
 			tx, err := db.BeginTxx(tb.Context(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 			require.NoError(tb, err)
@@ -156,13 +126,58 @@ func BenchmarkOtelSQL(tb *testing.B) {
 			samples = append(samples, elapsed)
 			tb.ResetTimer()
 		}
+
+		for i := 0; i < windowSize; i++ {
+			runBench()
+		}
 		p50, err := calcP50(samples)
 		require.NoError(tb, err)
-		avg, err := calcAvg(samples)
+		warmState.updateP50s(p50)
+	}
+
+	log.Println("start bench")
+	samples := make([]time.Duration, windowSize)
+	runBench := func() {
+		tb.StartTimer()
+		tx, err := db.BeginTxx(tb.Context(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 		require.NoError(tb, err)
-		p99, err := calcP99(samples)
+		rows, err := tx.QueryContext(tb.Context(), "SELECT id, content FROM messages LIMIT ?", 65536)
 		require.NoError(tb, err)
-		fmt.Printf("p(50): %v\np(99): %v\navg: %v\n", p50, p99, avg)
-		fmt.Println("======")
+		defer rows.Close()
+
+		for rows.Next() {
+			var id int
+			var content string
+			err = rows.Scan(&id, &content)
+			require.NoError(tb, err)
+		}
+		require.NoError(tb, tx.Commit())
+		elapsed := tb.Elapsed()
+		samples = append(samples, elapsed)
+		tb.ResetTimer()
+	}
+	for i := 0; i < windowSize; i++ {
+		runBench()
+	}
+
+	p50, err := calcP50(samples)
+	require.NoError(tb, err)
+	avg, err := calcAvg(samples)
+	require.NoError(tb, err)
+	p99, err := calcP99(samples)
+	require.NoError(tb, err)
+	fmt.Printf("p(50): %v\np(99): %v\navg: %v\n", p50, p99, avg)
+	fmt.Println("======")
+}
+
+func BenchmarkOtelSQL(tb *testing.B) {
+	rdbClients := []openDB{
+		openDBXSAM,
+		openDBUptrace,
+		openDBNhat,
+	}
+
+	for _, f := range rdbClients {
+		benchOtelSQL(tb, f)
 	}
 }
