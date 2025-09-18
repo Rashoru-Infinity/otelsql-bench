@@ -63,9 +63,11 @@ func main() {
 			// SpanFilter
 			// RecordError
 		}),
-		otelsql.WithAttributesGetter(func(_ context.Context, _ otelsql.Method, _ string, args []driver.NamedValue) []attribute.KeyValue {
+		otelsql.WithAttributesGetter(func(_ context.Context, m otelsql.Method, query string, args []driver.NamedValue) []attribute.KeyValue {
 			kvs := []attribute.KeyValue{
 				attribute.Int("db.sql.args.count", len(args)),
+				attribute.String("db.sql.method", string(m)),
+				attribute.String("db.sql.query", query),
 			}
 			for i, a := range args {
 				valueAttrKey := fmt.Sprintf("db.sql.args.%d.value", i+1)
